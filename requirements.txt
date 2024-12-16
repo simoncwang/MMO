@@ -1,0 +1,10 @@
+transformers
+torch
+torchvision
+accelerate
+openai
+datasets
+scikit-learn
+einops
+timm
+bitsandbytes
