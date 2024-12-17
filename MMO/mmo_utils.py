@@ -1,11 +1,65 @@
-from pydantic import BaseModel
-import re
-from intern_util import *
+from openai import OpenAI
+import torch
+from transformers import AutoProcessor, AutoModelForCausalLM, AutoTokenizer, AutoModel, Qwen2VLForConditionalGeneration
 import base64
 from io import BytesIO
 from qwen_vl_utils import process_vision_info
+from .mmo_intern_util import *
+import re
+from pydantic import BaseModel
 
-def parse_answer(answer, answer_choice_tokens):
+# initialize all of the models for inference, returns dict of initialized models
+def initializeModels(model_types: dict) -> dict:
+    initialized_models = {}
+
+    for model_name, model_type in model_types.items():
+        if model_type == "openai":
+            api_key = input("Please enter your OpenAI API Key: ")
+
+            client = OpenAI(api_key=api_key, timeout=60)
+        
+            initialized_models[model_name] = client
+        elif model_type == "internvl":
+            if torch.cuda.is_available():
+                model = AutoModel.from_pretrained(
+                    model_name,
+                    torch_dtype="auto",
+                    device_map="auto",
+                    low_cpu_mem_usage=True,
+                    use_flash_attn=True,
+                    trust_remote_code=True).eval()
+            else:
+                model = AutoModel.from_pretrained(
+                    model_name,
+                    torch_dtype="auto",
+                    device_map="auto",
+                    low_cpu_mem_usage=True,
+                    use_flash_attn=False,
+                    trust_remote_code=True).eval()
+            
+            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
+
+            initialized_models[model_name] = (model,tokenizer)
+        elif model_type == "qwenvl":
+            model = Qwen2VLForConditionalGeneration.from_pretrained(
+                model_name, torch_dtype="auto", device_map="auto"
+            )
+            processor = AutoProcessor.from_pretrained(model_name)
+
+            initialized_models[model_name] = (model,processor)
+        elif model_type == "hftext":   # basic text model from hf w no vision
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype="auto",
+                device_map="auto"
+            )
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+            initialized_models[model_name] = (model,tokenizer)
+
+    return initialized_models
+
+def parseScienceQA(answer, answer_choice_tokens):
     """
     copied from GPQA Github (https://github.com/klukosiute/gpqa-eval/blob/main/run_gpqa.py)
     updated for ScienceQA numerical choices (1-4).
@@ -42,7 +96,7 @@ def parse_answer(answer, answer_choice_tokens):
             return match.group(1)
     return "nothing"
 
-def getInternReponse(model, tokenizer, text, image):
+def getInternVLReponse(model, tokenizer, text, image):    # if internVL
     # set the max number of tiles in `max_num`
     device = torch.device("cpu")
     if torch.cuda.is_available():
@@ -61,7 +115,7 @@ def getInternReponse(model, tokenizer, text, image):
 
     return response
 
-def getQwenResponse(model, processor, messages):
+def getQwenVLResponse(model, processor, messages):   # if qwenVL
     text = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
@@ -86,7 +140,7 @@ def getQwenResponse(model, processor, messages):
 
     return response
 
-def getHFResponse(model, tokenizer, text):
+def getHFTextResponse(model, tokenizer, text):   
     messages = [
         {"role": "user", "content": text}
     ]
@@ -138,16 +192,3 @@ def encode_image(image):
         base64_string += '=' * (4 - missing_padding)
     
     return base64_string.strip()
-
-# def build_evaluation_prompt(problem):
-#     # Extract relevant fields
-#     question = problem['question']
-#     context = problem['image']  # or any relevant textual context
-#     choices = problem['choices']
-
-#     # Construct a prompt (you may format this as needed)
-#     prompt = f"Question: {question}\nContext: {context}\nChoices:\n"
-#     for idx, choice in enumerate(choices):
-#         prompt += f"Choice {idx + 1}: {choice}\n"
-#     prompt += "\nPlease choose the correct answer by returning the single number of the correct choice."
-#     return prompt

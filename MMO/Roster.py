@@ -1,4 +1,4 @@
-from util import *
+from .mmo_utils import *
 
 class Roster():
     def __init__(self, agents: dict):
@@ -18,12 +18,20 @@ class Roster():
         # storing the model types of each model
         model_types = {}
         for model,model_type in agents.items():
-            self.model_types[model] = model_type
+            model_types[model] = model_type
         
         # initialize all models and store here
+        num_models = len(agents)
+        print(f"Initializing {num_models} models...please wait a moment!\n")
         self.initialized_models = initializeModels(model_types)
+        return
+    
+    # returns codenames dict
+    def getCodenames(self):
+        return self.codenames
     
     def printCodenames(self):
+        print(f"Roster Codenames:\n")
         for agent,codename in self.codenames.items():
             print(f"Agent name: {agent}, Codename: {codename}\n")
 

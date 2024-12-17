@@ -2,10 +2,14 @@ from datasets import load_dataset
 from openai import OpenAI
 from sklearn.metrics import accuracy_score
 from tqdm import tqdm
-from util import *
-from transformers import AutoProcessor, AutoModelForCausalLM, AutoTokenizer, AutoModel, Qwen2VLForConditionalGeneration
+from eval_utils import *
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoModel
 import argparse
 import torch
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from multiprocessing import Pool, Manager, set_start_method
+import os
+
 
 # getting command line arguments
 parser = argparse.ArgumentParser()
@@ -63,38 +67,6 @@ if model_type == "openai":
 sample_size = samples  # Adjust the sample size as needed
 data = data.shuffle(seed=51).select(range(sample_size))
 
-# building models
-if model_type == "intern":
-    if cuda:
-        model = AutoModel.from_pretrained(
-            model_name,
-            torch_dtype="auto",
-            device_map="auto",
-            low_cpu_mem_usage=True,
-            use_flash_attn=True,
-            trust_remote_code=True).eval()
-    else:
-        model = AutoModel.from_pretrained(
-            model_name,
-            torch_dtype="auto",
-            device_map="auto",
-            low_cpu_mem_usage=True,
-            use_flash_attn=False,
-            trust_remote_code=True).eval()
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
-elif model_type == "hf":
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype="auto",
-        device_map="auto"
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-elif model_type == "qwen":
-    model = Qwen2VLForConditionalGeneration.from_pretrained(
-        model_name, torch_dtype="auto", device_map="auto"
-    )
-    processor = AutoProcessor.from_pretrained(model_name)
-
 # Function to get the model's response (assuming you are using GPT-4)
 def get_model_answer(problem):
     correct_answer_index = problem['answer']
@@ -142,34 +114,35 @@ def get_model_answer(problem):
         output = response.choices[0].message.content.strip()
 
     elif (model_type == "hf"):   # model from huggingface transformers
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype="auto",
+            device_map="auto"
+        )
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
         output = getHFResponse(model=model, tokenizer=tokenizer, text=prompt + answer_prompt)
     
     elif (model_type == "intern"):   # intern VL
-        output = getInternReponse(model, tokenizer, text=prompt+answer_prompt, image=image)
-    
-    elif (model_type == "qwen"):   # Qwen VL
-        if image:
-            base64_image = encode_image(image)
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": image},
-                        {"type": "text", "text": prompt+answer_prompt},
-                    ],
-                }
-            ]
+        if cuda:
+            model = AutoModel.from_pretrained(
+                model_name,
+                torch_dtype="auto",
+                device_map="auto",
+                low_cpu_mem_usage=True,
+                use_flash_attn=True,
+                trust_remote_code=True).eval()
         else:
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt+answer_prompt},
-                    ],
-                }
-            ]
+            model = AutoModel.from_pretrained(
+                model_name,
+                torch_dtype="auto",
+                device_map="auto",
+                low_cpu_mem_usage=True,
+                use_flash_attn=False,
+                trust_remote_code=True).eval()
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
         
-        output = getQwenResponse(model, processor, messages)
+        output = getInternReponse(model, tokenizer, text=prompt+answer_prompt, image=image)
+
 
     output = parse_answer(output, answer_choices)
 
@@ -188,18 +161,30 @@ total_questions = len(data)
 num_invalid = 0
 iterations = 0
 
-# Iterate through the dataset and test accuracy
-for problem in tqdm(data, total=total_questions, desc="Evaluating", unit="question"):
-    correct_answer_index, model_answer_index = get_model_answer(problem)
+# Multiprocessing evaluation
+if __name__ == "__main__":
+    try:
+        # Set the multiprocessing start method to 'spawn' for CUDA support
+        set_start_method('spawn')
+    except RuntimeError:
+        pass
 
-    if model_answer_index == -1:
-        num_invalid+=1
-    
-    # Compare model's answer index to the correct index
-    predictions.append(model_answer_index)
-    ground_truth.append(correct_answer_index)
+    with Manager() as manager:
+        ground_truth = manager.list()
+        predictions = manager.list()
+        num_invalid = manager.Value("i", 0)
 
-# Calculate accuracy
-accuracy = accuracy_score(ground_truth, predictions)
-print(f"Accuracy: {accuracy * 100:.2f}%")
-print(f"Number of invalid responses: {num_invalid}")
+        with Pool(processes=os.cpu_count()) as pool:
+            print(f"Number of cpus: {os.cpu_count()}")
+            results = list(tqdm(pool.imap(get_model_answer, data), total=len(data), desc="Evaluating", unit="question"))
+
+        for correct_answer, model_answer in results:
+            ground_truth.append(correct_answer)
+            if model_answer == -1:
+                num_invalid.value += 1
+            predictions.append(model_answer)
+
+        # Calculate accuracy
+        accuracy = accuracy_score(list(ground_truth), list(predictions))
+        print(f"Accuracy: {accuracy * 100:.2f}%")
+        print(f"Number of invalid responses: {num_invalid.value}")
