@@ -1,14 +1,14 @@
 import numpy as np
 import torch
 import torchvision.transforms as T
-from PIL import Image
+import PIL
 from torchvision.transforms.functional import InterpolationMode
 from transformers import AutoModel, AutoTokenizer
-import os
+# import os
 
-# for apple metal some features arent implemented, so default to CPU
-os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
-print("Fallback enabled:", os.environ.get('PYTORCH_ENABLE_MPS_FALLBACK', 'Not Set'))
+# # for apple metal some features arent implemented, so default to CPU
+# os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+# print("Fallback enabled:", os.environ.get('PYTORCH_ENABLE_MPS_FALLBACK', 'Not Set'))
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
@@ -76,7 +76,8 @@ def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbna
         processed_images.append(thumbnail_img)
     return processed_images
 
-def load_image(image, input_size=448, max_num=12):
+def load_image(pil_image, input_size=448, max_num=12):
+    image = pil_image.convert('RGB')
     transform = build_transform(input_size=input_size)
     images = dynamic_preprocess(image, image_size=input_size, use_thumbnail=True, max_num=max_num)
     pixel_values = [transform(image) for image in images]

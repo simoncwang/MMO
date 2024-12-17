@@ -6,5 +6,7 @@ openai
 datasets
 scikit-learn
 einops
-timm
+timm==1.0.10
 bitsandbytes
+qwen-vl-utils
+sentencepiece
