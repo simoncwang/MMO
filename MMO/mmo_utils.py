@@ -8,6 +8,16 @@ from .mmo_intern_util import *
 import re
 from pydantic import BaseModel
 
+# a single subtask
+class Subtask(BaseModel):
+    subtask: str
+    assigned_model: str
+
+# list of all subtasks
+class Subtasks(BaseModel):
+    original_question: str
+    subtasks: list[Subtask]
+
 # initialize all of the models for inference, returns dict of initialized models
 def initializeModels(model_types: dict) -> dict:
     initialized_models = {}
@@ -20,16 +30,7 @@ def initializeModels(model_types: dict) -> dict:
         
             initialized_models[model_name] = client
         elif model_type == "internvl":
-            if torch.cuda.is_available():
-                model = AutoModel.from_pretrained(
-                    model_name,
-                    torch_dtype="auto",
-                    device_map="auto",
-                    low_cpu_mem_usage=True,
-                    use_flash_attn=True,
-                    trust_remote_code=True).eval()
-            else:
-                model = AutoModel.from_pretrained(
+            model = AutoModel.from_pretrained(
                     model_name,
                     torch_dtype="auto",
                     device_map="auto",
@@ -115,11 +116,22 @@ def getInternVLReponse(model, tokenizer, text, image):    # if internVL
 
     return response
 
-def getQwenVLResponse(model, processor, messages):   # if qwenVL
+def getQwenVLResponse(model, processor, messages):
+    # specifying to avoid issues where tensors are on different GPUs
+    device="cuda:0"
+    
+    # moving model to same device as inputs
+    # model = model.to(device)
+
+    # Prepare text input
     text = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
+    
+    # Prepare vision inputs
     image_inputs, video_inputs = process_vision_info(messages)
+
+    # Prepare processor inputs
     inputs = processor(
         text=[text],
         images=image_inputs,
@@ -127,18 +139,23 @@ def getQwenVLResponse(model, processor, messages):   # if qwenVL
         padding=True,
         return_tensors="pt",
     )
+
+    # Move inputs to the same device
     inputs = inputs.to("cuda")
 
-    # Inference: Generation of the output
+    # Generate the response
     generated_ids = model.generate(**inputs, max_new_tokens=128)
+
+    # Trim and decode the output
     generated_ids_trimmed = [
-        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
     ]
     response = processor.batch_decode(
         generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
     )[0]
 
     return response
+
 
 def getHFTextResponse(model, tokenizer, text):   
     messages = [
@@ -170,10 +187,10 @@ def build_prompt(problem):
     choices = problem['choices']
 
     # Construct a prompt (you may format this as needed)
-    prompt = f"Question: {question}\n Choices:\n"
+    prompt = f"Question: {question}\nChoices:\n"
     for idx, choice in enumerate(choices):
         prompt += f"Choice {idx + 1}: {choice}\n"
-    prompt += "\nUse the image as context if present. Please choose the correct choice by returning the single number absolutely in the following format: Answer: <single digit>"
+    prompt += "\nUse the image as context if present."
     return prompt
 
 # Function to encode the image for openai
@@ -192,3 +209,4 @@ def encode_image(image):
         base64_string += '=' * (4 - missing_padding)
     
     return base64_string.strip()
+

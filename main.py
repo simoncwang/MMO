@@ -1,6 +1,7 @@
 from MMO import Commander, Roster
 from datasets import load_dataset
 import argparse
+from sklearn.metrics import accuracy_score
 
 def main():
     # getting command line arguments
@@ -20,7 +21,8 @@ def main():
         # "gpt-4o-mini": "openai",
         "OpenGVLab/InternVL2_5-2B": "internvl",
         "Qwen/Qwen2-VL-2B-Instruct": "qwenvl",
-        "Qwen/Qwen2.5-1.5B-Instruct": "hftext"
+        "Qwen/Qwen2.5-1.5B-Instruct": "hftext",
+        "gpt-4o-mini": "openai"
     }
 
     # creating a Roster object from the list of models
@@ -35,12 +37,18 @@ def main():
     
     # default commander model is gpt-4o
     commander_model = "gpt-4o"
-    commander = Commander(roster=roster, commander_model=commander_model, organization_mode="auto-subtask", dataset=dataset)
+    # commander = Commander(roster=roster, commander_model=commander_model, organization_mode="auto-subtask", multithreading=True, dataset=dataset)
+    commander = Commander(roster=roster, commander_model=commander_model, organization_mode="majority-vote-single", multithreading=True, dataset=dataset)
 
     # tests
     commander.roster.printCodenames()
-    commander.getResponses()
+    predictions,ground_truth = commander.getResponses()
 
+    # Printing out metrics
+    print(f"Number of samples: {samples}")
+    accuracy = accuracy_score(ground_truth, predictions)
+    print(f"Accuracy: {accuracy * 100:.2f}%")
+    # print(f"Number of invalid responses: {num_invalid}")
     
     return
 
