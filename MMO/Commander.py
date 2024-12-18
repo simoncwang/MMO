@@ -16,19 +16,29 @@ from openai import OpenAI
 from multiprocessing import Pool, cpu_count
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from multiprocessing import Pool, Manager
 import time
 
+# global variables
+api_key = input("\nPlease enter your OpenAI API Key: ")
+client = OpenAI(api_key=api_key, timeout=60)
+
 class Commander():
-    def __init__(self, roster: Roster, commander_model: str, organization_mode: str, multithreading: bool, dataset) -> None:
+    def __init__(self, roster: Roster, commander_model: str, mode: str, model_name: str, model_type: str, multithreading: bool, dataset) -> None:
         self.roster = roster
         self.dataset = dataset
         self.commander_model = commander_model
-        self.organization_mode = organization_mode
+        self.mode = mode
+
+        # for single model experiments
+        self.model_name = model_name
+        self.model_type = model_type
+
         self.multithreading = multithreading
         
-        # initializing OpenAI client once
-        api_key = input("\nPlease enter your OpenAI API Key: ")
-        self.client = OpenAI(api_key=api_key, timeout=60)
+        # # initializing OpenAI client once
+        # api_key = input("\nPlease enter your OpenAI API Key: ")
+        # client = OpenAI(api_key=api_key, timeout=60)
 
         return
     
@@ -37,7 +47,7 @@ class Commander():
     
     # iterate over all problems in the dataset and get answers depending on the organization mode
     def getResponses(self) -> list:
-        mode = self.organization_mode
+        mode = self.mode
         data = self.dataset
         total_questions = len(data)
         
@@ -45,7 +55,7 @@ class Commander():
         ground_truth = []
         num_invalid = 0
 
-        if mode == "auto-subtask":
+        if mode == "auto-subtask":   # automatically assigning subtasks using gpt-4o (or another commander model)
             print(f"Running auto subtasks mode with")
             start_time = time.time()
             if self.multithreading:
@@ -55,7 +65,7 @@ class Commander():
                     futures = []
                     for problem in data:
                         futures.append(
-                            executor.submit(self.processProblem, problem)
+                            executor.submit(self.processSubtasks, problem)
                         )
 
                     for future in tqdm(as_completed(futures), total=total_questions, desc="Evaluating", unit="question"):
@@ -74,14 +84,14 @@ class Commander():
                 print("no multithreading!")
                 for problem in tqdm(data, total=total_questions, desc="Evaluating", unit="question"):
                     correct_answer_index = problem['answer']
-                    subtasks = assignSubtasks(self.client, self.commander_model, problem, self.roster)
+                    subtasks = assignSubtasks(client, self.commander_model, problem, self.roster)
                     # printSubtasks(subtasks)
                     subtask_answers = self.roster.getSubtaskAnswers(problem, subtasks)
 
                     # for task,answer in subtask_answers.items():
                     #     print(f"TASK DESCRIPTION:\n{task}\nANSWER:\n{answer}")
 
-                    final_answer = finalAnswerFromSubtasks(self.client, self.commander_model, problem, subtask_answers)
+                    final_answer = finalAnswerFromSubtasks(client, self.commander_model, problem, subtask_answers)
 
                     # convert to 0-index to match ground truth
                     try:
@@ -102,19 +112,28 @@ class Commander():
             start_time = time.time()
 
             num_votes = 5
-            model_name = "gpt-4o-mini"
-            model_type = "openai"
+            model_name = self.model_name
+            model_type = self.model_type
 
             print(f"\nRunning majority vote with single model! num_votes: {num_votes}, model_name: {model_name}\n")
 
-            for problem in tqdm(data, total=total_questions, desc="Evaluating", unit="question"):
-                correct_answer_index,model_answer_index = majorityVoteSingleModel(problem, num_votes, self.roster, model_name, model_type)
+            if model_type == "openai":   # if openai can use multiprocessing
+                with Pool(processes=os.cpu_count()) as pool:
+                    print(f"Number of CPUs: {os.cpu_count()}")
+                    results = list(tqdm(pool.imap(majorityVoteSingleParallel, data), total=len(data), desc="Evaluating", unit="question"))
 
-                predictions.append(model_answer_index)
-                ground_truth.append(correct_answer_index)
+                ground_truth = [res[0] for res in results]
+                predictions = [res[1] for res in results]
+                num_invalid = sum(1 for _, model_answer in results if model_answer == -1)
+            else:
+                for problem in tqdm(data, total=total_questions, desc="Evaluating", unit="question"):
+                    correct_answer_index,model_answer_index = majorityVoteSingleModel(problem, num_votes, self.roster, model_name, model_type)
 
-                if model_answer_index == -1:
-                    num_invalid+=1
+                    predictions.append(model_answer_index)
+                    ground_truth.append(correct_answer_index)
+
+                    if model_answer_index == -1:
+                        num_invalid+=1
         
             end_time = time.time()
             runtime = end_time - start_time
@@ -123,14 +142,15 @@ class Commander():
 
         return predictions,ground_truth
     
-    def processProblem(self, problem):
-        """Processes a single problem: assigns subtasks, gets subtask answers, and determines the final answer."""
+    # wrapper function to process a single problem and its subtask functions, for multithreading
+    def processSubtasks(self, problem):
         correct_answer_index = problem['answer']
         subtasks = assignSubtasks(self.client, self.commander_model, problem, self.roster)
         subtask_answers = self.roster.getSubtaskAnswers(problem, subtasks)
         final_answer = finalAnswerFromSubtasks(self.client, self.commander_model, problem, subtask_answers)
 
         return final_answer, correct_answer_index
+
 
 # class for openai structured outputs so answer always single int
 class Answer(BaseModel):
@@ -187,8 +207,6 @@ def finalAnswerFromSubtasks(client,commander_model,problem,subtask_answers: dict
     )
 
     return completion.choices[0].message.parsed.answer
-    
-    
 
 # function to print subtasks in a nice format just for testing
 def printSubtasks(subtasks: Subtasks):
@@ -200,7 +218,6 @@ def printSubtasks(subtasks: Subtasks):
         print(f"\nAssigned model: {subtask.assigned_model}")
         print(f"Subtask Description: {subtask.subtask}\n")
         i+=1
-        
 
 # formates the codenames(skills of each model) in a way the model can understand
 def formatCodenames(roster: Roster):
@@ -269,12 +286,10 @@ def majorityVoteSingleModel(problem, num_votes: int, roster: Roster, model_name:
 
     initialized_models = roster.initialized_models
     correct_answer_index = problem['answer']
-    prompt = build_prompt(problem)
+    prompt = build_majority_vote_prompt(problem)
     image = problem['image']
     
-    if model_type == "openai":
-        client = initialized_models[model_name]
-    elif model_type == "internvl":
+    if model_type == "internvl":
         model,tokenizer = initialized_models[model_name]
     elif model_type == "qwenvl":
         model,processor = initialized_models[model_name]
@@ -292,47 +307,7 @@ def majorityVoteSingleModel(problem, num_votes: int, roster: Roster, model_name:
 
     # call model num_votes
     for i in range(num_votes):
-        if (model_type == "openai"):
-            # Getting the base64 string
-            if image:   # if context image given
-                base64_image = encode_image(image)
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": prompt + answer_prompt,
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url":  f"data:image/jpeg;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ]
-            else:   # only text given
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": prompt + answer_prompt,
-                            }
-                        ]
-                    }
-                ]
-
-            response = client.chat.completions.create(
-                model=model_name,
-                messages = messages
-            )
-            output = response.choices[0].message.content.strip()
-
-        elif (model_type == "hftext"):   # model from huggingface transformers
+        if (model_type == "hftext"):   # model from huggingface transformers
             output = getHFTextResponse(model=model, tokenizer=tokenizer, text=prompt + answer_prompt)
         
         elif (model_type == "internvl"):   # intern VL
@@ -375,6 +350,77 @@ def majorityVoteSingleModel(problem, num_votes: int, roster: Roster, model_name:
 
     return correct_answer_index, max_vote_choice
 
+# multiprocessing enabled majority vote for openai models
+def majorityVoteSingleParallel(problem):
+    model_name = "gpt-4o-mini"
+    num_votes = 5
+    correct_answer_index = problem['answer']
+    prompt = build_majority_vote_prompt(problem)
+    image = problem['image']
+    answer_choices = ['1', '2', '3', '4']
+    answer_prompt = "Absolutely provide your answer in the following format: Answer: <single digit of correct choice>"
+
+    # dict to track votes for each answer choice, 0-index to match correct answer indices, including -1 for invalid answers
+    votes = {
+        -1: 0,
+        0: 0,
+        1: 0,
+        2: 0,
+        3: 0
+    }
+
+    for i in range(num_votes):
+        # Getting the base64 string
+        if image:   # if context image given
+            base64_image = encode_image(image)
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt + answer_prompt,
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url":  f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        else:   # only text given
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt + answer_prompt,
+                        }
+                    ]
+                }
+            ]
+
+        response = client.chat.completions.create(
+            model=model_name,
+            messages = messages
+        )
+        output = response.choices[0].message.content.strip()
+
+        output = parseScienceQA(output, answer_choices)
+
+        try:
+            model_answer_index = int(output.strip()) - 1  # Convert to 0-based index
+        except ValueError:
+            model_answer_index = -1  # Handle invalid responses
+
+        votes[model_answer_index]+=1
+    
+    max_vote_choice = max(votes, key=votes.get)
+
+    return correct_answer_index, max_vote_choice
 
 # do majority voting with calls to multiple models
 def majorityVoteMultiModel():

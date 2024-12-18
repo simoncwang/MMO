@@ -193,6 +193,19 @@ def build_prompt(problem):
     prompt += "\nUse the image as context if present."
     return prompt
 
+def build_majority_vote_prompt(problem):
+    # Extract relevant fields
+    question = problem['question']
+    choices = problem['choices']
+
+    # Construct a prompt (you may format this as needed)
+    prompt = f"Question: {question}\n Choices:\n"
+    for idx, choice in enumerate(choices):
+        prompt += f"Choice {idx + 1}: {choice}\n"
+    prompt += "\nUse the image as context if present. Please choose the correct choice by returning the single number absolutely in the following format: Answer: <single digit>"
+    return prompt
+
+
 # Function to encode the image for openai
 def encode_image(image):
     if image.mode != "RGB":

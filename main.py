@@ -13,8 +13,32 @@ def main():
         help="Number of samples from evaluation dataset"
     )
 
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="majority-vote-single",
+        help="The experiment to run"
+    )
+
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default="gpt-4o-mini",
+        help="The name of the model to run the experiment on"
+    )
+
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default="openai",
+        help="The model provider or type"
+    )
+
     args = parser.parse_args()
     samples = args.samples
+    mode = args.mode
+    model_name = args.model_name
+    model_type = args.model_type
 
     # list of models we have access to, with their identifying model types
     agents = {
@@ -38,7 +62,7 @@ def main():
     # default commander model is gpt-4o
     commander_model = "gpt-4o"
     # commander = Commander(roster=roster, commander_model=commander_model, organization_mode="auto-subtask", multithreading=True, dataset=dataset)
-    commander = Commander(roster=roster, commander_model=commander_model, organization_mode="majority-vote-single", multithreading=True, dataset=dataset)
+    commander = Commander(roster=roster, commander_model=commander_model, mode=mode, model_name=model_name, model_type=model_type, multithreading=True, dataset=dataset)
 
     # tests
     commander.roster.printCodenames()
