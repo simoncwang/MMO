@@ -35,6 +35,7 @@ def parse_answer(answer, answer_choice_tokens):
         r"answer: choice \((\d)\)",
         r"Answer: choice \((\d)\)",
         r"answer: Choice \((\d)\)",
+        r"(\d)",
     ]
     for pattern in patterns:
         match = re.search(pattern, answer)

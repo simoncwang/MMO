@@ -7,6 +7,7 @@ from qwen_vl_utils import process_vision_info
 from .mmo_intern_util import *
 import re
 from pydantic import BaseModel
+import ast
 
 # a single subtask
 class Subtask(BaseModel):
@@ -89,6 +90,7 @@ def parseScienceQA(answer, answer_choice_tokens):
         r"answer: choice \((\d)\)",
         r"Answer: choice \((\d)\)",
         r"answer: Choice \((\d)\)",
+        r"(\d)",
     ]
     for pattern in patterns:
         match = re.search(pattern, answer)
@@ -96,6 +98,45 @@ def parseScienceQA(answer, answer_choice_tokens):
         if match and match.group(1) in answer_choice_tokens:
             return match.group(1)
     return "nothing"
+
+def parse_MMMU(answer, answer_choice_tokens):
+    """
+    Adapted for MMMU where answers are A, B, C, D, or E (case-insensitive).
+    """
+    # Patterns for alphabetical answers (A, B, C, D, E) both uppercase and lowercase
+    patterns = [
+        r"Answer: ([A-Ea-e])",            # Matches "Answer: A" or "Answer: a"
+        r"answer: ([A-Ea-e])",            # Matches "answer: A" or "answer: a"
+        r"answer is \(([A-Ea-e])\)",      # Matches "answer is (A)" or "answer is (a)"
+        r"Answer: \(([A-Ea-e])\)",        # Matches "Answer: (A)" or "Answer: (a)"
+        r"answer: \(([A-Ea-e])\)",        # Matches "answer: (A)" or "answer: (a)"
+        r"answer \(([A-Ea-e])\)",         # Matches "answer (A)" or "answer (a)"
+        r"answer is ([A-Ea-e])\.",        # Matches "answer is A." or "answer is a."
+        r"Answer: ([A-Ea-e])\.",          # Matches "Answer: A." or "Answer: a."
+        r"answer: ([A-Ea-e])\.",          # Matches "answer: A." or "answer: a."
+        r"answer ([A-Ea-e])\.",           # Matches "answer A." or "answer a."
+        r"answer is choice \(([A-Ea-e])\)",  # Matches "answer is choice (A)" or "answer is choice (a)"
+        r"answer is Choice \(([A-Ea-e])\)",  # Matches "answer is Choice (A)" or "answer is Choice (a)"
+        r"answer is choice ([A-Ea-e])",      # Matches "answer is choice A" or "answer is choice a"
+        r"answer is Choice ([A-Ea-e])",      # Matches "answer is Choice A" or "answer is Choice a"
+        r"Answer: Choice ([A-Ea-e])",
+        r"answer: choice ([A-Ea-e])",
+        r"Answer: choice ([A-Ea-e])",
+        r"answer: Choice ([A-Ea-e])",
+        r"Answer: Choice \(([A-Ea-e])\)",
+        r"answer: choice \(([A-Ea-e])\)",
+        r"Answer: choice \(([A-Ea-e])\)",
+        r"answer: Choice \(([A-Ea-e])\)",
+        r"([A-Ea-e])"                      # Matches just a single letter (A, B, C, D, E)
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, answer)
+
+        # Check if the match is valid and within the choice tokens (case-insensitive)
+        if match and match.group(1).upper() in answer_choice_tokens:
+            return match.group(1).upper()  # Return the answer in uppercase format
+    
+    return "invalid"
 
 def getInternVLReponse(model, tokenizer, text, image):    # if internVL
     # set the max number of tiles in `max_num`
@@ -181,7 +222,7 @@ def getHFTextResponse(model, tokenizer, text):
 
     return response
 
-def build_prompt(problem):
+def build_commander_prompt_ScienceQA(problem):
     # Extract relevant fields
     question = problem['question']
     choices = problem['choices']
@@ -193,7 +234,28 @@ def build_prompt(problem):
     prompt += "\nUse the image as context if present."
     return prompt
 
-def build_majority_vote_prompt(problem):
+def build_commander_prompt_MMMU(problem):
+    # Extract relevant fields
+    question = problem['question']
+    # converting options string to a list
+    options_str = problem['options']
+    options = ast.literal_eval(options_str)
+
+    # mapping from indices to letter choices
+    mapping = ['A', 'B', 'C', 'D', 'E']
+
+    # if there are more than 5 options, just trim the options down
+    if len(options)>5:
+        options = options[0:4]
+
+    # Construct a prompt (you may format this as needed)
+    prompt = f"Question: {question}\n Choices:\n"
+    for idx, choice in enumerate(options):
+        prompt += f"Choice {mapping[idx]}: {choice}\n"
+    prompt += "\nUse the image as context if present."
+    return prompt
+
+def build_ScienceQA_prompt(problem):
     # Extract relevant fields
     question = problem['question']
     choices = problem['choices']
@@ -203,6 +265,27 @@ def build_majority_vote_prompt(problem):
     for idx, choice in enumerate(choices):
         prompt += f"Choice {idx + 1}: {choice}\n"
     prompt += "\nUse the image as context if present. Please choose the correct choice by returning the single number absolutely in the following format: Answer: <single digit>"
+    return prompt
+
+def build_MMMU_prompt(problem):
+    # Extract relevant fields
+    question = problem['question']
+    # converting options string to a list
+    options_str = problem['options']
+    options = ast.literal_eval(options_str)
+
+    # mapping from indices to letter choices
+    mapping = ['A', 'B', 'C', 'D', 'E']
+
+    # if there are more than 5 options, just trim the options down
+    if len(options)>5:
+        options = options[0:4]
+
+    # Construct a prompt (you may format this as needed)
+    prompt = f"Question: {question}\n Choices:\n"
+    for idx, choice in enumerate(options):
+        prompt += f"Choice {mapping[idx]}: {choice}\n"
+    prompt += "\nUse the image as context if present. Please choose the correct choice absolutely in the following format: Answer: <single letter>"
     return prompt
 
 

@@ -34,30 +34,52 @@ def main():
         help="The model provider or type"
     )
 
+    parser.add_argument(
+        "--benchmark",
+        type=str,
+        default="scienceqa",
+        help="The benchmark to test on."
+    )
+
+    parser.add_argument(
+        "--subset",
+        type=str,
+        default="Physics",
+        help="The subset of MMMU"
+    )
+
+
     args = parser.parse_args()
     samples = args.samples
     mode = args.mode
     model_name = args.model_name
     model_type = args.model_type
+    benchmark = args.benchmark
+    subset = args.subset
 
     # list of models we have access to, with their identifying model types
     agents = {
         # "gpt-4o-mini": "openai",
         "OpenGVLab/InternVL2_5-2B": "internvl",
-        "Qwen/Qwen2-VL-2B-Instruct": "qwenvl",
+        # "Qwen/Qwen2-VL-2B-Instruct": "qwenvl",
         "Qwen/Qwen2.5-1.5B-Instruct": "hftext",
-        "gpt-4o-mini": "openai"
+        # "gpt-4o-mini": "openai"
     }
 
     # creating a Roster object from the list of models
     roster = Roster(agents)
 
-    # loading dataset (currently scienceqa)
-    dataset = load_dataset('derek-thomas/ScienceQA', split='test')
+    if benchmark == "scienceqa":
+        # loading dataset (currently scienceqa)
+        dataset = load_dataset('derek-thomas/ScienceQA', split='test')
 
-    # Sample a few entries for testing
-    sample_size = samples  # Adjust the sample size as needed
-    dataset = dataset.shuffle(seed=51).select(range(sample_size))
+        # Sample a few entries for testing
+        sample_size = samples  # Adjust the sample size as needed
+        dataset = dataset.shuffle(seed=51).select(range(sample_size))
+    elif benchmark == "mmmu":
+        dataset = load_dataset("MMMU/MMMU", subset)
+        # filtering only multiple choice
+        dataset = dataset["validation"].filter(lambda problem: problem["question_type"] == "multiple-choice")
     
     # default commander model is gpt-4o
     commander_model = "gpt-4o"
@@ -69,7 +91,9 @@ def main():
     predictions,ground_truth = commander.getResponses()
 
     # Printing out metrics
-    print(f"Number of samples: {samples}")
+    if benchmark == "scienceqa":
+        print(f"Number of samples: {samples}")
+        
     accuracy = accuracy_score(ground_truth, predictions)
     print(f"Accuracy: {accuracy * 100:.2f}%")
     # print(f"Number of invalid responses: {num_invalid}")

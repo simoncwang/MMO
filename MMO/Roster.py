@@ -31,15 +31,20 @@ class Roster():
         return self.codenames
     
     def printCodenames(self):
-        print(f"Roster Codenames:\n")
+        print(f"Roster:\n")
         for agent,codename in self.codenames.items():
             print(f"Agent name: {agent}, Codename: {codename}\n")
 
     
     # get answers from each model for their subtask
-    def getSubtaskAnswers(self, problem, subtasks: Subtasks) -> dict:
-        question = build_prompt(problem)
-        image = problem['image']
+    def getSubtaskAnswers(self, problem, subtasks: Subtasks, benchmark) -> dict:
+        if benchmark == "scienceqa":
+            question_prompt = build_commander_prompt_ScienceQA(problem)
+            image = problem['image']
+        elif benchmark == "mmmu":
+            question_prompt = build_commander_prompt_MMMU(problem)
+            image = problem["image_1"]
+
         initialized_models = self.initialized_models
 
         image_provided = False
@@ -54,7 +59,7 @@ class Roster():
             model_name = subtask.assigned_model
             task_description = subtask.subtask
 
-            prompt = f"Given the original question:\n{question}\nAnd the image attached if present, complete the following subtask description: {task_description}"
+            prompt = f"Given the original question:\n{question_prompt}\nAnd the image attached if present, complete the following subtask description: {task_description}"
 
             if model_name == "Qwen/Qwen2.5-1.5B-Instruct":
                 model,tokenizer = initialized_models[model_name]

@@ -22,6 +22,8 @@ import time
 # global variables
 api_key = input("\nPlease enter your OpenAI API Key: ")
 client = OpenAI(api_key=api_key, timeout=60)
+benchmark = input("\nPlease enter the name of the benchmark you want to run, mmmu or scienceqa (case sensitive): ")
+assert benchmark in {"mmmu", "scienceqa"}, "Invalid benchmark. Please enter either 'mmmu' or 'scienceqa' (case sensitive)"
 
 class Commander():
     def __init__(self, roster: Roster, commander_model: str, mode: str, model_name: str, model_type: str, multithreading: bool, dataset) -> None:
@@ -71,11 +73,14 @@ class Commander():
                     for future in tqdm(as_completed(futures), total=total_questions, desc="Evaluating", unit="question"):
                         final_answer, correct_answer = future.result()
 
-                        try:
-                            final_answer  = int(final_answer) - 1
-                        except ValueError:
-                            num_invalid += 1
-                            final_answer = -1 
+                        print(f"TEST FINAL ANSWER: {final_answer}, CORRECT ANSWER: {correct_answer}")
+                        
+                        if benchmark == "scienceqa":
+                            try:
+                                final_answer  = int(final_answer) - 1
+                            except ValueError:
+                                num_invalid += 1
+                                final_answer = -1 
 
                         predictions.append(final_answer)
                         ground_truth.append(correct_answer)
@@ -83,25 +88,26 @@ class Commander():
             else:   # single threaded
                 print("no multithreading!")
                 for problem in tqdm(data, total=total_questions, desc="Evaluating", unit="question"):
-                    correct_answer_index = problem['answer']
-                    subtasks = assignSubtasks(client, self.commander_model, problem, self.roster)
+                    correct_answer = problem['answer']
+                    subtasks = assignSubtasks(client, self.commander_model, problem, self.roster,benchmark)
                     # printSubtasks(subtasks)
                     subtask_answers = self.roster.getSubtaskAnswers(problem, subtasks)
 
                     # for task,answer in subtask_answers.items():
                     #     print(f"TASK DESCRIPTION:\n{task}\nANSWER:\n{answer}")
 
-                    final_answer = finalAnswerFromSubtasks(client, self.commander_model, problem, subtask_answers)
+                    final_answer = finalAnswerFromSubtasks(client, self.commander_model, problem, subtask_answers,benchmark)
 
                     # convert to 0-index to match ground truth
-                    try:
-                        final_answer  = int(final_answer) - 1
-                    except ValueError:
-                        num_invalid += 1
-                        final_answer = -1 
+                    if benchmark == "scienceqa":
+                        try:
+                            final_answer  = int(final_answer) - 1
+                        except ValueError:
+                            num_invalid += 1
+                            final_answer = -1 
 
                     predictions.append(final_answer)
-                    ground_truth.append(correct_answer_index)
+                    ground_truth.append(correct_answer)
             
             end_time = time.time()
             runtime = end_time - start_time
@@ -110,7 +116,6 @@ class Commander():
 
         elif mode == "majority-vote-single":
             start_time = time.time()
-
             num_votes = 5
             model_name = self.model_name
             model_type = self.model_type
@@ -124,16 +129,16 @@ class Commander():
 
                 ground_truth = [res[0] for res in results]
                 predictions = [res[1] for res in results]
-                num_invalid = sum(1 for _, model_answer in results if model_answer == -1)
+                # num_invalid = sum(1 for _, model_answer in results if model_answer == -1)
             else:
                 for problem in tqdm(data, total=total_questions, desc="Evaluating", unit="question"):
-                    correct_answer_index,model_answer_index = majorityVoteSingleModel(problem, num_votes, self.roster, model_name, model_type)
+                    correct_answer,model_answer = majorityVoteSingleModel(problem, num_votes, self.roster, model_name, model_type, benchmark)
 
-                    predictions.append(model_answer_index)
-                    ground_truth.append(correct_answer_index)
+                    predictions.append(model_answer)
+                    ground_truth.append(correct_answer)
 
-                    if model_answer_index == -1:
-                        num_invalid+=1
+                    # if model_answer_index == -1:
+                    #     num_invalid+=1
         
             end_time = time.time()
             runtime = end_time - start_time
@@ -145,16 +150,19 @@ class Commander():
     # wrapper function to process a single problem and its subtask functions, for multithreading
     def processSubtasks(self, problem):
         correct_answer_index = problem['answer']
-        subtasks = assignSubtasks(self.client, self.commander_model, problem, self.roster)
-        subtask_answers = self.roster.getSubtaskAnswers(problem, subtasks)
-        final_answer = finalAnswerFromSubtasks(self.client, self.commander_model, problem, subtask_answers)
+        subtasks = assignSubtasks(client, self.commander_model, problem, self.roster)
+        subtask_answers = self.roster.getSubtaskAnswers(problem, subtasks, benchmark)
+        final_answer = finalAnswerFromSubtasks(client, self.commander_model, problem, subtask_answers)
 
         return final_answer, correct_answer_index
 
 
 # class for openai structured outputs so answer always single int
-class Answer(BaseModel):
+class ScienceQAAnswer(BaseModel):
     answer: int
+
+class MMMUAnswer(BaseModel):
+    answer: str
 
 # use commander model to analyze subtasks answers then provide a final answer
 def finalAnswerFromSubtasks(client,commander_model,problem,subtask_answers: dict) -> int:
@@ -166,11 +174,21 @@ def finalAnswerFromSubtasks(client,commander_model,problem,subtask_answers: dict
         subtask_context += f"Subtask {i} description: {task}\nSubtask {i} answer:\n{answer}"
         i+=1
     
+    answer_format = "single digit"
+
     # prompts
-    question = build_prompt(problem)
-    image = problem["image"]
+    if benchmark == "scienceqa":
+        question_prompt = build_commander_prompt_ScienceQA(problem)
+        image = problem['image']
+        Answer = ScienceQAAnswer
+    elif benchmark == "mmmu":
+        question_prompt = build_commander_prompt_MMMU(problem)
+        image = problem["image_1"]
+        Answer = MMMUAnswer
+        answer_format = "single letter"
+
     system_prompt = "You are an expert at answering multiple choice questions given answers to subtasks as context"
-    prompt = f"Answer the following question: {question} by providing the single digit of the correct choice. Use the image if provided as well as the following answers to subtasks to inform your final answer: {subtask_context}"
+    prompt = f"Answer the following question: {question_prompt} by providing the {answer_format} of the correct choice. Use the image if provided as well as the following answers to subtasks to inform your final answer: {subtask_context}"
     
     # setting up messages depending on if a context image was provided
     if image:
@@ -231,9 +249,12 @@ def formatCodenames(roster: Roster):
 
 # create subtasks and assign them to the best model
 def assignSubtasks(client,commander_model,problem,roster: Roster):
-    # for creating subtasks, only need question and image if given
-    question_prompt = build_prompt(problem)
-    image = problem['image']
+    if benchmark == "scienceqa":
+        question_prompt = build_commander_prompt_ScienceQA(problem)
+        image = problem['image']
+    elif benchmark == "mmmu":
+        question_prompt = build_commander_prompt_MMMU(problem)
+        image = problem["image_1"]
 
     # getting the model names and their strengths
     model_strengths = formatCodenames(roster)
@@ -280,14 +301,35 @@ def assignSubtasks(client,commander_model,problem,roster: Roster):
 
 
 # do majority voting with multiple calls to a single model
-def majorityVoteSingleModel(problem, num_votes: int, roster: Roster, model_name: str, model_type: str):
-    answer_choices = ['1', '2', '3', '4']
+def majorityVoteSingleModel(problem, num_votes: int, roster: Roster, model_name: str, model_type: str, benchmark):
+    if benchmark == "scienceqa":
+        answer_choices = {'1', '2', '3', '4'}
+        prompt = build_ScienceQA_prompt(problem)
+        image = problem['image']
+        votes = {
+            -1: 0,
+            0: 0,
+            1: 0,
+            2: 0,
+            3: 0
+        }
+    elif benchmark == "mmmu":
+        answer_choices = {'A','B','C','D','E'}
+        prompt = build_MMMU_prompt(problem)
+        image = problem["image_1"]
+        votes = {
+            "invalid": 0,
+            'A': 0,
+            'B': 0,
+            'C': 0,
+            'D': 0,
+            'E': 0
+        }
+
     answer_prompt = "Absolutely provide your answer in the following format: Answer: <single digit of correct choice>"
 
     initialized_models = roster.initialized_models
-    correct_answer_index = problem['answer']
-    prompt = build_majority_vote_prompt(problem)
-    image = problem['image']
+    correct_answer = problem['answer']
     
     if model_type == "internvl":
         model,tokenizer = initialized_models[model_name]
@@ -296,15 +338,6 @@ def majorityVoteSingleModel(problem, num_votes: int, roster: Roster, model_name:
     elif model_type == "hftext":
         model,tokenizer = initialized_models[model_name]
     
-    # dict to track votes for each answer choice, 0-index to match correct answer indices, including -1 for invalid answers
-    votes = {
-        -1: 0,
-        0: 0,
-        1: 0,
-        2: 0,
-        3: 0
-    }
-
     # call model num_votes
     for i in range(num_votes):
         if (model_type == "hftext"):   # model from huggingface transformers
@@ -336,38 +369,94 @@ def majorityVoteSingleModel(problem, num_votes: int, roster: Roster, model_name:
                 ]
             
             output = getQwenVLResponse(model, processor, messages)
+        elif model_type == "openai":
+            # Getting the base64 string
+            if image:   # if context image given
+                base64_image = encode_image(image)
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt + answer_prompt,
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url":  f"data:image/jpeg;base64,{base64_image}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            else:   # only text given
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt + answer_prompt,
+                            }
+                        ]
+                    }
+                ]
 
-        output = parseScienceQA(output, answer_choices)
+            response = client.chat.completions.create(
+                model=model_name,
+                messages = messages
+            )
+            output = response.choices[0].message.content.strip()
 
-        try:
-            model_answer_index = int(output.strip()) - 1  # Convert to 0-based index
-        except ValueError:
-            model_answer_index = -1  # Handle invalid responses
-
-        votes[model_answer_index]+=1
+        # parsing the output
+        if benchmark == "scienceqa":
+            output = parseScienceQA(output, answer_choices)
+            try:
+                model_answer = int(output.strip()) - 1  # Convert to 0-based index
+            except ValueError:
+                model_answer = -1  # Handle invalid responses
+        else:
+            output = parse_MMMU(output, answer_choices)
+            model_answer = output.strip()
+        
+        votes[model_answer]+=1
     
     max_vote_choice = max(votes, key=votes.get)
 
-    return correct_answer_index, max_vote_choice
+    return correct_answer, max_vote_choice
 
 # multiprocessing enabled majority vote for openai models
 def majorityVoteSingleParallel(problem):
-    model_name = "gpt-4o-mini"
-    num_votes = 5
-    correct_answer_index = problem['answer']
-    prompt = build_majority_vote_prompt(problem)
-    image = problem['image']
-    answer_choices = ['1', '2', '3', '4']
+    if benchmark == "scienceqa":
+        answer_choices = {'1', '2', '3', '4'}
+        prompt = build_ScienceQA_prompt(problem)
+        image = problem['image']
+        votes = {
+            -1: 0,
+            0: 0,
+            1: 0,
+            2: 0,
+            3: 0
+        }
+    elif benchmark == "mmmu":
+        answer_choices = {'A','B','C','D','E'}
+        prompt = build_MMMU_prompt(problem)
+        image = problem["image_1"]
+        votes = {
+            "invalid": 0,
+            'A': 0,
+            'B': 0,
+            'C': 0,
+            'D': 0,
+            'E': 0
+        }
+
     answer_prompt = "Absolutely provide your answer in the following format: Answer: <single digit of correct choice>"
 
-    # dict to track votes for each answer choice, 0-index to match correct answer indices, including -1 for invalid answers
-    votes = {
-        -1: 0,
-        0: 0,
-        1: 0,
-        2: 0,
-        3: 0
-    }
+    correct_answer = problem['answer']
+    num_votes = 5
+    model_name = "gpt-4o-mini"
 
     for i in range(num_votes):
         # Getting the base64 string
@@ -409,18 +498,22 @@ def majorityVoteSingleParallel(problem):
         )
         output = response.choices[0].message.content.strip()
 
-        output = parseScienceQA(output, answer_choices)
-
-        try:
-            model_answer_index = int(output.strip()) - 1  # Convert to 0-based index
-        except ValueError:
-            model_answer_index = -1  # Handle invalid responses
-
-        votes[model_answer_index]+=1
+        # parsing the output
+        if benchmark == "scienceqa":
+            output = parseScienceQA(output, answer_choices)
+            try:
+                model_answer = int(output.strip()) - 1  # Convert to 0-based index
+            except ValueError:
+                model_answer = -1  # Handle invalid responses
+        else:
+            output = parse_MMMU(output, answer_choices)
+            model_answer = output.strip()
+        
+        votes[model_answer]+=1
     
     max_vote_choice = max(votes, key=votes.get)
 
-    return correct_answer_index, max_vote_choice
+    return correct_answer, max_vote_choice
 
 # do majority voting with calls to multiple models
 def majorityVoteMultiModel():
