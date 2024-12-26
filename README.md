@@ -57,8 +57,27 @@ For **MMMU** baselines run the following command (example shown for gpt-4o, but 
 
 **NOTES:**
 * General usage is same as ScienceQA, but for MMMU specify the subset desired (e.g. Physics, Computer Science, Chemistry, etc.), for full documentation visit the official MMMU page for all subsets available https://mmmu-benchmark.github.io/
-* 
+* By default, no sample size is set since I am using the validation partition of the MMMU dataset, and therefore subset sizes are relatively small and we can use the entire dataset. However, if you run into GPU memory issues, use the optional --samples argument to specify a smaller sample size (refer to MMMU documentation for the size of your subset)
  
-###
+### Multi-agent Benchmarking
+
+Navigate back to the root directory if you are in the BaselineEvals directory:
+
+        cd ..
+
+There are currently two multi-agent experiments implemented; **Auto-Subtask** and **Majority Vote**. You may specify the type of experiment using the --mode argument, and the benchmark to test on using --benchmark as follows:
+
+For **Auto-Subtask:**:
+
+        python3 main.py --mode auto-subtask --benchmark mmmu --subset Physics
+
+For **Majority Vote**:
+
+        python3 main.py --samples 1000 --mode majority-vote-single --model_name gpt-4o-mini --model_type openai --benchmark scienceqa
+
+**NOTES:**
+* For the Auto-Subtask mode, do NOT provide --model_name, --samples, or --model_type arguments. The Auto-Subtask system is already preset with a Commander model and a Roster of agents. To edit the models in the system you must change them within the main.py file and MMO/Commander.py file (**a more easy to use configuration system will be implemented in the near future**).
+* For the Majority Vote experiment, be careful setting the sample size when using the mmmu benchmark so as to not exceed the size of the subset you are using (also be s ure to include the --subset argument when using --benchmark mmmu)
+
 
 
