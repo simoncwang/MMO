@@ -167,7 +167,6 @@ def get_model_answer(problem):
     output = parse_answer(output, answer_choices)
     model_answer = output.strip()
 
-    
 
     return correct_answer, model_answer
 
@@ -191,6 +190,9 @@ def main():
     set_seed(args.seed)
 
     multiple_choice_data = data["validation"].filter(lambda problem: problem["question_type"] == "multiple-choice")
+
+    if samples: 
+        multiple_choice_data = multiple_choice_data.shuffle(seed=51).select(range(samples))
 
     # Initialize variables for testing
     predictions = []
