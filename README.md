@@ -1,5 +1,8 @@
 # MMO: An Investigation of Multi-modal Multi-agent Organization & Robust Benchmarking of MLLMs
-A course project for CMSC848K - Multimodal Foundation Models @ University of Maryland
+
+[**🌐 My Website**](https://simoncwang.github.io/) | [**📖 Full Technical Report (link to be fixed)**](https://simoncwang.github.io/projects/videogen.html)
+
+A course project for CMSC848K - Multimodal Foundation Models at the University of Maryland, College Park.
 
 ## Introduction
 
